@@ -13,6 +13,9 @@ dependencies = [
     "soundfile",
     "sounddevice",
     "structlog>=22.0",
+    "rustymimi>=0.4.1",
+    "sentencepiece>=0.2.1",
+    "sphn>=0.2.1",
 ]
 requires-python = ">=3.12"
 readme = "README.md"

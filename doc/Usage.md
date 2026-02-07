@@ -63,20 +63,26 @@ Modifier `src/jarvis/handlers.py` et envoyer une nouvelle requête — le daemon
 ## Scripts de développement
 
 ```bash
+# Installer les dépendances
+pdm install
+
 # Lancer les tests
-uv run pytest tests/ -v
+pdm run test
 
 # Linting
-uv run ruff check src/ tests/
+pdm run lint
+
+# Stress test
+pdm run stress
 ```
 
 ## Standalone (legacy)
 
 ```bash
 # Génération one-shot (recharge le modèle à chaque appel)
-uv run q3tts.py "Hello world"
-uv run q3tts.py -l French -i "deep masculine voice" "Bonjour"
+python q3tts.py "Hello world"
+python q3tts.py -l French -i "deep masculine voice" "Bonjour"
 
 # Jouer un fichier audio
-uv run play.py output.wav
+python play.py output.wav
 ```
