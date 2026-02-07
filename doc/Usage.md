@@ -1,46 +1,4 @@
-# Usage: q3tts
-
-## Generate audio
-
-```bash
-# Basic (English, default voice)
-uv run q3tts.py "Hello world"
-
-# French
-uv run q3tts.py -l French "On est reparti !"
-
-# With voice instruction
-uv run q3tts.py -i "deep masculine voice with warm cheerful intonation" "Hello"
-
-# French + voice instruction
-uv run q3tts.py -l French -i "deep masculine voice with warm cheerful intonation" "On est reparti !"
-
-# Custom output filename
-uv run q3tts.py -o greeting.wav "Hello world"
-
-# Piped input
-echo "Hello world" | uv run q3tts.py
-
-# Verbose (shows progress)
-uv run q3tts.py -v "Hello world"
-```
-
-Output files are auto-incremented: `output.wav`, `output-2.wav`, `output-3.wav`, ...
-
-## Play audio
-
-```bash
-uv run play.py 1cestparti.wav
-```
-
-## Options
-
-| Flag | Description | Default |
-|------|-------------|---------|
-| `-o` | Output filename | `output.wav` |
-| `-l` | Language (`English`, `French`, `Chinese`, ...) | `English` |
-| `-i` | Voice instruction (e.g. `"deep low voice"`) | none |
-| `-v` | Verbose output | off |
+# Usage: jah
 
 ## Daemon mode (streaming, low latency)
 
@@ -50,35 +8,75 @@ Le daemon garde le modèle en mémoire — élimine ~5.4s de startup par requêt
 
 ```bash
 # Terminal 1 : démarrer le daemon (reste en foreground)
-uv run src/q3tts_daemon.py
+jah serve
 ```
 
 ### Envoyer du texte
 
 ```bash
 # Terminal 2 : générer et jouer sur le speaker
-uv run src/q3tts_client.py "Hello world"
+jah "Hello world"
 
 # French + voice instruction
-uv run src/q3tts_client.py -l French -i "deep masculine voice" "Bonjour"
+jah speak -l French -i "deep masculine voice" "Bonjour"
 
 # Sauvegarder en fichier
-uv run src/q3tts_client.py -o greeting.wav "Hello world"
+jah speak -o greeting.wav "Hello world"
 
 # Piped input
-echo "Hello world" | uv run src/q3tts_client.py
+echo "Hello world" | jah speak
 ```
 
 ### Contrôle du daemon
 
 ```bash
 # Vérifier si le daemon tourne
-uv run src/q3tts_client.py status
+jah status
 
 # Arrêter le daemon proprement
-uv run src/q3tts_client.py stop
+jah stop
+```
+
+### Stress test
+
+```bash
+# Lancer les tests de stabilité (silent = pas d'audio)
+jah stress --silent
+
+# Avec options
+jah stress --silent --delay 0.2 --category short
+jah stress --report results.json
 ```
 
 ### Hot-reload
 
-Modifier `src/handlers.py` et envoyer une nouvelle requête — le daemon recharge automatiquement le code sans redémarrer. Pas besoin de relancer quoi que ce soit.
+Modifier `src/jarvis/handlers.py` et envoyer une nouvelle requête — le daemon recharge automatiquement le code sans redémarrer.
+
+## Options (speak)
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-o` | Output filename | speakers |
+| `-l` | Language (`English`, `French`, `Chinese`, ...) | `English` |
+| `-i` | Voice instruction (e.g. `"deep masculine voice"`) | none |
+
+## Scripts de développement
+
+```bash
+# Lancer les tests
+uv run pytest tests/ -v
+
+# Linting
+uv run ruff check src/ tests/
+```
+
+## Standalone (legacy)
+
+```bash
+# Génération one-shot (recharge le modèle à chaque appel)
+uv run q3tts.py "Hello world"
+uv run q3tts.py -l French -i "deep masculine voice" "Bonjour"
+
+# Jouer un fichier audio
+uv run play.py output.wav
+```

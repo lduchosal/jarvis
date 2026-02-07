@@ -1,10 +1,4 @@
-# /// script
-# requires-python = ">=3.12"
-# dependencies = [
-#     "click",
-# ]
-# ///
-"""q3tts client — sends requests to the daemon over Unix socket."""
+"""jah — CLI client for the jarvis TTS daemon."""
 
 import json
 import socket
@@ -15,6 +9,8 @@ from pathlib import Path
 import click
 
 SOCKET_PATH = Path.home() / ".q3tts.sock"
+
+SUBCOMMANDS = {"serve", "stop", "status", "stress"}
 
 
 def send_message(sock: socket.socket, msg: dict):
@@ -53,26 +49,34 @@ def send_request(request: dict, timeout: float = 120) -> dict:
         return read_message(s)
 
 
-@click.group(invoke_without_command=True)
+class JahGroup(click.Group):
+    """Custom group that allows `jah "text"` without a subcommand."""
+
+    def parse_args(self, ctx, args):
+        # If first arg looks like text (not a subcommand), insert "speak" command
+        if args and args[0] not in SUBCOMMANDS and not args[0].startswith("-"):
+            args = ["speak"] + args
+        return super().parse_args(ctx, args)
+
+
+@click.group(cls=JahGroup)
+def cli():
+    """jah — Jarvis voice assistant."""
+    pass
+
+
+@cli.command()
 @click.argument("text", required=False)
 @click.option("-o", "--output", default=None, help="Save audio to file")
 @click.option("-l", "--language", default="English", help="Language (default: English)")
 @click.option("-i", "--instruct", default=None, help="Voice instruction")
-@click.pass_context
-def cli(ctx, text, output, language, instruct):
-    """q3tts — TTS client for the q3tts daemon."""
-    if ctx.invoked_subcommand is not None:
-        return
-
-    # No subcommand — treat as text generation
+def speak(text, output, language, instruct):
+    """Generate speech from text."""
     if text is None:
         if not sys.stdin.isatty():
             text = sys.stdin.read().strip()
         else:
-            click.echo("Usage: q3tts_client.py [OPTIONS] TEXT")
-            click.echo("       q3tts_client.py serve")
-            click.echo("       q3tts_client.py stop")
-            click.echo("       q3tts_client.py status")
+            click.echo("Usage: jah \"text to speak\"")
             sys.exit(1)
 
     if not text:
@@ -80,7 +84,7 @@ def cli(ctx, text, output, language, instruct):
         sys.exit(1)
 
     if not daemon_is_running():
-        click.echo("Error: daemon is not running. Start it with: uv run src/q3tts_daemon.py", err=True)
+        click.echo("Error: daemon is not running. Start it with: jah serve", err=True)
         sys.exit(1)
 
     request = {
@@ -101,11 +105,9 @@ def cli(ctx, text, output, language, instruct):
 
 @cli.command()
 def serve():
-    """Start the daemon (runs q3tts_daemon.py)."""
-    import subprocess
-    daemon_script = Path(__file__).parent / "q3tts_daemon.py"
-    click.echo(f"Starting daemon: {daemon_script}")
-    subprocess.run([sys.executable, str(daemon_script)])
+    """Start the TTS daemon."""
+    from jarvis.daemon import main as daemon_main
+    daemon_main()
 
 
 @cli.command()
@@ -129,6 +131,23 @@ def status():
         click.echo("Daemon is running.")
     else:
         click.echo("Daemon is not running.")
+
+
+@cli.command()
+@click.option("--silent", is_flag=True, help="Skip audio playback (output to /dev/null)")
+@click.option("--delay", default=0.5, help="Delay between requests in seconds")
+@click.option("--report", default="tests/stability_report.json", help="Path for JSON report")
+@click.option("--category", default=None, help="Only run tests from this category")
+def stress(silent, delay, report, category):
+    """Run stress tests against the daemon."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "stress_test",
+        Path(__file__).parent.parent.parent / "tests" / "stress_test.py",
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    mod.run_stress(silent=silent, delay=delay, report_path=report, category=category)
 
 
 if __name__ == "__main__":

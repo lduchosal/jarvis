@@ -1,0 +1,102 @@
+{
+  "total_requests": 54,
+  "success": 51,
+  "errors": 2,
+  "timeouts": 1,
+  "crashes": 0,
+  "connection_errors": 0,
+  "success_rate": "94.4%",
+  "response_times": {
+    "avg_ms": 5905,
+    "median_ms": 2259,
+    "p95_ms": 28865,
+    "max_ms": 46723,
+    "min_ms": 1071
+  },
+  "text_length": {
+    "max_chars_ok": 305,
+    "min_chars_fail": 1
+  },
+  "per_category": {
+    "short": {
+      "total": 10,
+      "ok": 10,
+      "errors": 0,
+      "avg_ms": 1567,
+      "median_ms": 1551,
+      "p95_ms": 2857,
+      "max_ms": 2857
+    },
+    "medium": {
+      "total": 10,
+      "ok": 10,
+      "errors": 0,
+      "avg_ms": 7294,
+      "median_ms": 7534,
+      "p95_ms": 8485,
+      "max_ms": 8485
+    },
+    "long": {
+      "total": 3,
+      "ok": 3,
+      "errors": 0,
+      "avg_ms": 28544,
+      "median_ms": 28865,
+      "p95_ms": 32499,
+      "max_ms": 32499
+    },
+    "very_long": {
+      "total": 1,
+      "ok": 0,
+      "errors": 1,
+      "avg_ms": 120000,
+      "median_ms": 120000,
+      "p95_ms": 120000,
+      "max_ms": 120000
+    },
+    "edge_case": {
+      "total": 10,
+      "ok": 8,
+      "errors": 2,
+      "avg_ms": 14383,
+      "median_ms": 6793,
+      "p95_ms": 59654,
+      "max_ms": 59654
+    },
+    "repeat": {
+      "total": 20,
+      "ok": 20,
+      "errors": 0,
+      "avg_ms": 2138,
+      "median_ms": 2133,
+      "p95_ms": 2377,
+      "max_ms": 2377
+    }
+  },
+  "failed_details": [
+    {
+      "index": 23,
+      "category": "very_long",
+      "chars": 875,
+      "status": "timeout",
+      "error": "socket timeout",
+      "text_preview": "L'intelligence artificielle est un domaine de l'informatique..."
+    },
+    {
+      "index": 24,
+      "category": "edge_case",
+      "chars": 0,
+      "status": "error",
+      "error": "no text provided",
+      "text_preview": ""
+    },
+    {
+      "index": 25,
+      "category": "edge_case",
+      "chars": 1,
+      "status": "error",
+      "error": "no text provided",
+      "text_preview": " "
+    }
+  ]
+}

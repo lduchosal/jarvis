@@ -29,12 +29,21 @@ def handle(model, request: dict) -> dict:
     output_path = request.get("output")
     play_audio = output_path is None  # play on speaker only if no output file
 
+    # Scale max_tokens with text length (short text = fewer tokens needed)
+    max_tokens = max(256, min(4096, len(text) * 20))
+
     gen_kwargs = {
         "text": text,
         "language": language,
         "verbose": False,
         "instruct": instruct,
+        "temperature": 0.7,
+        "repetition_penalty": 1.2,
+        "max_tokens": max_tokens,
     }
+
+    # Cap chunks to prevent infinite generation loops
+    max_chunks = max(50, len(text) * 5)
 
     try:
         all_audio = []
@@ -45,7 +54,9 @@ def handle(model, request: dict) -> dict:
             stream.start()
 
         try:
-            for result in model.generate_voice_design(**gen_kwargs):
+            for i, result in enumerate(model.generate_voice_design(**gen_kwargs)):
+                if i >= max_chunks:
+                    break
                 chunk = np.array(result.audio, dtype=np.float32)
                 if chunk.ndim == 1:
                     chunk = chunk.reshape(-1, 1)

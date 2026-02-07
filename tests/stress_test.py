@@ -1,21 +1,14 @@
-# /// script
-# requires-python = ">=3.12"
-# dependencies = [
-#     "click",
-# ]
-# ///
-"""Stress test for q3tts daemon — sends varied requests and collects metrics."""
+"""Stress test for jarvis daemon — sends varied requests and collects metrics."""
 
 import json
-import socket
-import struct
 import sys
 import time
 from pathlib import Path
 
 import click
 
-SOCKET_PATH = Path.home() / ".q3tts.sock"
+from jarvis.cli import SOCKET_PATH, send_request
+
 
 # --- Corpus ---
 
@@ -89,43 +82,12 @@ def build_corpus() -> list[dict]:
     return corpus
 
 
-# --- Socket communication ---
-
-def send_message(sock: socket.socket, msg: dict):
-    payload = json.dumps(msg).encode("utf-8")
-    sock.sendall(struct.pack("!I", len(payload)) + payload)
-
-
-def read_message(sock: socket.socket, timeout: float = 120) -> dict:
-    sock.settimeout(timeout)
-    raw_len = b""
-    while len(raw_len) < 4:
-        chunk = sock.recv(4 - len(raw_len))
-        if not chunk:
-            raise ConnectionError("daemon disconnected")
-        raw_len += chunk
-    msg_len = struct.unpack("!I", raw_len)[0]
-
-    data = b""
-    while len(data) < msg_len:
-        chunk = sock.recv(msg_len - len(data))
-        if not chunk:
-            raise ConnectionError("daemon disconnected")
-        data += chunk
-    return json.loads(data.decode("utf-8"))
-
-
-def send_request(request: dict, timeout: float = 120) -> dict:
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
-        s.connect(str(SOCKET_PATH))
-        send_message(s, request)
-        return read_message(s, timeout)
-
-
 # --- Test runner ---
 
 def run_test(entry: dict, index: int, total: int, silent: bool) -> dict:
     """Run a single test and return the result."""
+    import socket as _socket
+
     text = entry["text"]
     category = entry["category"]
     char_count = len(text)
@@ -157,7 +119,7 @@ def run_test(entry: dict, index: int, total: int, silent: bool) -> dict:
         result["status"] = resp.get("status", "unknown")
         if resp.get("status") != "ok":
             result["error"] = resp.get("message", "unknown error")
-    except socket.timeout:
+    except _socket.timeout:
         elapsed = (time.time() - t0) * 1000
         result["response_ms"] = round(elapsed)
         result["status"] = "timeout"
@@ -194,7 +156,6 @@ def generate_report(results: list[dict]) -> dict:
     crashes = [r for r in results if r["status"] == "crash"]
     conn_errors = [r for r in results if r["status"] == "connection_error"]
 
-    response_times = [r["response_ms"] for r in results if r["response_ms"] is not None]
     success_times = [r["response_ms"] for r in successes if r["response_ms"] is not None]
 
     # Find length limits
@@ -261,17 +222,11 @@ def generate_report(results: list[dict]) -> dict:
     return report
 
 
-@click.command()
-@click.option("--silent", is_flag=True, help="No audio output (save to /dev/null)")
-@click.option("--delay", default=0.5, help="Delay in seconds between requests (default: 0.5)")
-@click.option("--report", "report_path", default="tests/stability_report.json", help="Output report path")
-@click.option("--category", default=None, help="Run only a specific category")
-def main(silent: bool, delay: float, report_path: str, category: str | None):
-    """Run stress tests against the q3tts daemon."""
+def run_stress(silent: bool, delay: float, report_path: str, category: str | None):
+    """Run stress tests against the jarvis daemon."""
 
-    # Check daemon
     if not SOCKET_PATH.exists():
-        click.echo("Error: daemon not running. Start with: uv run src/q3tts_daemon.py", err=True)
+        click.echo("Error: daemon not running. Start with: jah serve", err=True)
         sys.exit(1)
 
     corpus = build_corpus()
@@ -340,7 +295,3 @@ def main(silent: bool, delay: float, report_path: str, category: str | None):
     report_file.parent.mkdir(parents=True, exist_ok=True)
     report_file.write_text(json.dumps(report, indent=2, ensure_ascii=False))
     click.echo(f"Report saved to {report_path}")
-
-
-if __name__ == "__main__":
-    main()

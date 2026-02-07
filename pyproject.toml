@@ -1,0 +1,79 @@
+[project]
+name = "jarvis"
+dynamic = ["version"]
+description = "Voice assistant — TTS daemon with streaming audio on Apple Silicon"
+authors = [
+    {name = "ldvchosal", email = "ldvchosal@github.com"},
+]
+dependencies = [
+    "transformers>=5.0.0rc1",
+    "mlx-audio==0.3.0rc1",
+    "click>=8.3",
+    "numpy",
+    "soundfile",
+    "sounddevice",
+    "structlog>=22.0",
+]
+requires-python = ">=3.12"
+readme = "README.md"
+license = {file = "LICENSE"}
+
+[project.urls]
+"Homepage" = "https://github.com/lduchosal/jarvis"
+"Bug Reports" = "https://github.com/lduchosal/jarvis/issues"
+"Source" = "https://github.com/lduchosal/jarvis"
+
+[project.scripts]
+jah = "jarvis.cli:cli"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4",
+    "pytest-cov>=7.0",
+    "ruff>=0.13.0",
+    "mypy>=1.18",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+]
+
+[tool.coverage.run]
+source = ["src/jarvis"]
+omit = ["tests/*"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+check_untyped_defs = true
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.pdm]
+distribution = true
+version = {source = "file", path = "src/jarvis/__init__.py"}
+
+[tool.pdm.scripts]
+daemon = "python src/q3tts_daemon.py"
+client = "python src/q3tts_client.py"
+stress = "python tests/stress_test.py"
+test = "python -m pytest tests/ -v"
+lint = "ruff check src/ tests/"
+
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
