@@ -156,3 +156,86 @@ def listen(bundle, duration=None):
     tokens_per_sec = step / elapsed if elapsed > 0 else 0
     print(f"[{step} steps, {tokens_per_sec:.1f} tok/s, {elapsed:.1f}s]",
           file=sys.stderr, flush=True)
+
+
+def listen_until_silence(bundle, silence_threshold=15, max_duration=30):
+    """Listen until silence detected. Returns transcribed text.
+
+    Args:
+        silence_threshold: consecutive silent steps before stopping (15 ≈ 1.2s)
+        max_duration: max listen time in seconds
+    """
+    gen = bundle["gen"]
+    text_tokenizer = bundle["text_tokenizer"]
+    audio_tokenizer = bundle["audio_tokenizer"]
+    ct = bundle["ct"]
+    other_codebooks = bundle["other_codebooks"]
+
+    input_queue = queue.Queue()
+    running = True
+    accumulated = []
+    silence_count = 0
+
+    def on_input(in_data, frames, time_info, status):
+        if running:
+            input_queue.put_nowait(in_data[:, 0].astype(np.float32).copy())
+
+    # Warmup audio tokenizer
+    for _ in range(4):
+        silence = np.zeros(BLOCK_SIZE, dtype=np.float32)
+        audio_tokenizer.encode(silence)
+        while True:
+            time.sleep(0.001)
+            data = audio_tokenizer.get_encoded()
+            if data is not None:
+                break
+
+    start_time = time.time()
+
+    with sd.InputStream(samplerate=SAMPLE_RATE, channels=1,
+                        blocksize=BLOCK_SIZE, callback=on_input):
+        try:
+            while running:
+                if (time.time() - start_time) >= max_duration:
+                    break
+
+                try:
+                    pcm = input_queue.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+
+                audio_tokenizer.encode(pcm)
+                encoded = None
+                for _ in range(100):
+                    encoded = audio_tokenizer.get_encoded()
+                    if encoded is not None:
+                        break
+                    time.sleep(0.001)
+
+                if encoded is None:
+                    continue
+
+                audio_tokens = mx.array(encoded).transpose(1, 0)[:, :other_codebooks]
+                text_token = gen.step(audio_tokens[0], ct)
+                text_token = text_token[0].item()
+
+                if text_token not in (0, 3):
+                    text = text_tokenizer.id_to_piece(text_token)
+                    text = text.replace("\u2581", " ")
+                    accumulated.append(text)
+                    silence_count = 0
+                    print(text, end="", flush=True)
+                else:
+                    if accumulated:
+                        silence_count += 1
+
+                if silence_count >= silence_threshold and accumulated:
+                    break
+
+        except KeyboardInterrupt:
+            pass
+        finally:
+            running = False
+
+    print(file=sys.stderr)
+    return "".join(accumulated).strip()

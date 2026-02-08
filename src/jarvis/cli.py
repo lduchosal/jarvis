@@ -10,7 +10,7 @@ import click
 
 SOCKET_PATH = Path.home() / ".q3tts.sock"
 
-SUBCOMMANDS = {"serve", "stop", "status", "stress", "listen"}
+SUBCOMMANDS = {"serve", "stop", "status", "stress", "listen", "echo"}
 
 
 def send_message(sock: socket.socket, msg: dict):
@@ -72,12 +72,12 @@ def cli():
 @click.option("-i", "--instruct", default=None, help="Voice instruction")
 def speak(text, output, language, instruct):
     """Generate speech from text."""
-    if text is None:
-        if not sys.stdin.isatty():
-            text = sys.stdin.read().strip()
-        else:
-            click.echo("Usage: jah \"text to speak\"")
-            sys.exit(1)
+    # Piped input always wins over positional argument
+    if not sys.stdin.isatty():
+        text = sys.stdin.read().strip()
+    elif text is None:
+        click.echo("Usage: jah \"text to speak\"")
+        sys.exit(1)
 
     if not text:
         click.echo("Error: text cannot be empty.", err=True)
@@ -160,6 +160,41 @@ def listen(duration):
     bundle = load_model()
     click.echo("Model loaded.", err=True)
     stt_listen(bundle, duration=duration)
+
+
+@cli.command(name="echo")
+@click.option("-l", "--language", default="French", help="Language for TTS (default: French)")
+@click.option("-i", "--instruct", default=None, help="Voice instruction for TTS")
+def echo_cmd(language, instruct):
+    """Listen to mic, then repeat back via TTS."""
+    from jarvis.stt import load_model, listen_until_silence
+
+    if not daemon_is_running():
+        click.echo("Error: TTS daemon not running. Start with: jah serve", err=True)
+        sys.exit(1)
+
+    click.echo("Loading STT model...", err=True)
+    bundle = load_model()
+    click.echo("Ready. Speak now.", err=True)
+
+    while True:
+        try:
+            text = listen_until_silence(bundle)
+            if not text:
+                continue
+            click.echo(f"> {text}", err=True)
+            resp = send_request({
+                "action": "generate",
+                "text": text,
+                "language": language,
+                "instruct": instruct,
+            })
+            if resp.get("status") != "ok":
+                click.echo(f"TTS error: {resp.get('message')}", err=True)
+        except KeyboardInterrupt:
+            break
+
+    click.echo("\nDone.", err=True)
 
 
 if __name__ == "__main__":
