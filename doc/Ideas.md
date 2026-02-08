@@ -32,7 +32,9 @@
 - [ ] Le daemon écoute le micro en continu via `sounddevice.InputStream`
 - [ ] Un modèle STT (Whisper MLX ?) transcrit la voix en texte en temps réel
 - [ ] Détection de fin de parole (silence / VAD) pour déclencher la transcription
+- [ ] Utiliser `kAudioDevicePropertyVoiceActivityDetectionState` (CoreAudio HAL) pour la VAD hardware — le Neural Engine M4 détecte l'activité vocale nativement, plus fiable et rapide que notre compteur de tokens silence. Nécessite un binding Python vers CoreAudio (PyObjC ou ctypes).
 - [ ] Séparation de sources audio : isoler les voix, filtrer le bruit ambiant
+- [ ] Exploiter Voice Isolation macOS (Neural Engine + beamforming 3 micros) — transparent via `sounddevice`, l'utilisateur active dans Control Center. Avec AirPods Pro 3, double beamforming (H2 + M4).
 - [ ] Reconnaissance multi-locuteurs (speaker diarization) : identifier qui parle dans la discussion
 - [ ] Pipeline complet : micro → STT → LLM → TTS → speaker (boucle conversationnelle)
 

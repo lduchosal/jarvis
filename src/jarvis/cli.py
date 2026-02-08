@@ -10,7 +10,7 @@ import click
 
 SOCKET_PATH = Path.home() / ".q3tts.sock"
 
-SUBCOMMANDS = {"serve", "stop", "status", "stress", "listen", "echo"}
+SUBCOMMANDS = {"serve", "stop", "status", "stress", "listen", "echo", "talk"}
 
 
 def send_message(sock: socket.socket, msg: dict):
@@ -167,7 +167,7 @@ def listen(duration):
 @click.option("-i", "--instruct", default=None, help="Voice instruction for TTS")
 def echo_cmd(language, instruct):
     """Listen to mic, then repeat back via TTS."""
-    from jarvis.stt import load_model, listen_until_silence
+    from jarvis.stt import load_model, listen_until_silence, reset
 
     if not daemon_is_running():
         click.echo("Error: TTS daemon not running. Start with: jah serve", err=True)
@@ -191,10 +191,24 @@ def echo_cmd(language, instruct):
             })
             if resp.get("status") != "ok":
                 click.echo(f"TTS error: {resp.get('message')}", err=True)
+            reset(bundle)
         except KeyboardInterrupt:
             break
 
     click.echo("\nDone.", err=True)
+
+
+@cli.command()
+@click.option("-l", "--language", default="French", help="Language for TTS (default: French)")
+def talk(language):
+    """Voice conversation with Claude Code (STT -> Claude -> TTS)."""
+    if not daemon_is_running():
+        click.echo("Error: TTS daemon not running. Start with: jah serve", err=True)
+        sys.exit(1)
+
+    import asyncio
+    from jarvis.talk import run_talk
+    asyncio.run(run_talk(language=language))
 
 
 if __name__ == "__main__":

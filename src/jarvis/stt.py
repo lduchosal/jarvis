@@ -71,12 +71,39 @@ def load_model(hf_repo="kyutai/stt-1b-en_fr-mlx", max_steps=4000):
 
     return {
         "gen": gen,
+        "model": model,
         "text_tokenizer": text_tokenizer,
         "audio_tokenizer": audio_tokenizer,
         "ct": ct,
         "other_codebooks": other_codebooks,
         "stt_config": stt_config,
+        "max_steps": max_steps,
+        "mimi_path": mimi_path,
     }
+
+
+def reset(bundle):
+    """Reset generator and audio tokenizer for a new listening session.
+
+    Must be called between conversation turns to avoid buffer overflow
+    (LmGen has a finite max_steps, StreamTokenizer buffer is bounded).
+    """
+    model = bundle["model"]
+    ct = bundle["ct"]
+    max_steps = bundle["max_steps"]
+    mimi_path = bundle["mimi_path"]
+    other_codebooks = bundle["other_codebooks"]
+
+    bundle["gen"] = models.LmGen(
+        model=model,
+        max_steps=max_steps,
+        text_sampler=utils.Sampler(temp=0.0, top_k=50),
+        audio_sampler=utils.Sampler(temp=0.8, top_k=250),
+        check=False,
+    )
+    bundle["audio_tokenizer"] = rustymimi.StreamTokenizer(
+        mimi_path, num_codebooks=other_codebooks
+    )
 
 
 def listen(bundle, duration=None):
