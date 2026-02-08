@@ -49,7 +49,7 @@ class CustomHelpCommand(click.Command):
 
 @click.command(cls=CustomHelpCommand)
 @click.argument("text", required=False)
-@click.option("-o", "--output", default="1cestparti.wav", help="Output filename (default: 1cestparti.wav)")
+@click.option("-o", "--output", default="hello.wav", help="Output filename (default: hello.wav)")
 @click.option("-l", "--language", default="English", help="Language for TTS (default: English)")
 @click.option("-i", "--instruct", default=None, help="Voice instruction (e.g., 'deep low voice')")
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
@@ -67,7 +67,7 @@ def main(text: str | None, output: str, language: str, instruct: str | None, ver
     
     # Determine output path
     output_path = Path(output)
-    if output == "1cestparti.wav":
+    if output == "hello.wav":
         # Only auto-increment for default filename
         output_path = get_unique_filename(output_path)
     

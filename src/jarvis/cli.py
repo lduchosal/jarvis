@@ -10,7 +10,7 @@ import click
 
 SOCKET_PATH = Path.home() / ".q3tts.sock"
 
-SUBCOMMANDS = {"serve", "stop", "status", "stress"}
+SUBCOMMANDS = {"serve", "stop", "status", "stress", "listen"}
 
 
 def send_message(sock: socket.socket, msg: dict):
@@ -148,6 +148,18 @@ def stress(silent, delay, report, category):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     mod.run_stress(silent=silent, delay=delay, report_path=report, category=category)
+
+
+@cli.command()
+@click.option("--duration", type=float, default=None, help="Max listen duration in seconds")
+def listen(duration):
+    """Real-time speech-to-text from microphone."""
+    from jarvis.stt import load_model, listen as stt_listen
+
+    click.echo("Loading STT model...", err=True)
+    bundle = load_model()
+    click.echo("Model loaded.", err=True)
+    stt_listen(bundle, duration=duration)
 
 
 if __name__ == "__main__":
