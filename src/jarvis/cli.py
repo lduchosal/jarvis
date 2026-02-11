@@ -200,7 +200,8 @@ def echo_cmd(language, instruct):
 
 @cli.command()
 @click.option("-l", "--language", default="French", help="Language for TTS (default: French)")
-def talk(language):
+@click.option("-m", "--model", default=None, help="Claude model (e.g. haiku, sonnet, opus)")
+def talk(language, model):
     """Voice conversation with Claude Code (STT -> Claude -> TTS)."""
     if not daemon_is_running():
         click.echo("Error: TTS daemon not running. Start with: jah serve", err=True)
@@ -208,7 +209,7 @@ def talk(language):
 
     import asyncio
     from jarvis.talk import run_talk
-    asyncio.run(run_talk(language=language))
+    asyncio.run(run_talk(language=language, model=model))
 
 
 if __name__ == "__main__":

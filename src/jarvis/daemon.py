@@ -89,14 +89,56 @@ class GenerationTimeout(BaseException):
     pass
 
 
+FILLER_VARIANTS = 5  # number of vocal takes per phrase
+
 FILLERS = {
-    "French": ["Hmm.", "Voyons.", "Alors.", "Bonne question.", "Voyons voir."],
-    "English": ["Hmm.", "Let me think.", "Well.", "Good question.", "Let's see."],
+    "French": [
+        "Hmm.",
+        "Voyons.",
+        "Alors.",
+        "Bonne question.",
+        "Voyons voir.",
+        "Attends, je réfléchis.",
+        "Laisse-moi réfléchir un instant.",
+        "Ah, intéressant.",
+        "OK, voyons ça.",
+        "Oui, alors.",
+        "Attends voir.",
+        "Eh bien.",
+        "C'est une bonne question, ça.",
+        "Hmm, laisse-moi vérifier.",
+        "OK, deux secondes.",
+        "Alors, comment dire.",
+        "Ah oui, d'accord.",
+        "Hmm, voyons un peu.",
+        "Oui, je vois.",
+        "Euh, attends.",
+    ],
+    "English": [
+        "Hmm.",
+        "Let me think.",
+        "Well.",
+        "Good question.",
+        "Let's see.",
+        "One moment.",
+        "OK, let me check.",
+        "Right, so.",
+        "Interesting.",
+        "Let me think about that.",
+        "Hmm, good one.",
+        "OK, hang on.",
+        "Yeah, so.",
+        "Let me see.",
+        "Ah, right.",
+    ],
 }
 
 
 def warm_fillers(model, log):
-    """Pre-generate filler audio files at startup. Cached on disk."""
+    """Pre-generate filler audio files at startup. Cached on disk.
+
+    Generates FILLER_VARIANTS vocal takes per phrase for natural variety.
+    """
     cache_dir = Path.home() / ".cache" / "jarvis" / "fillers"
     cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -105,37 +147,38 @@ def warm_fillers(model, log):
         prefix = lang[:2].lower()
         paths = []
         for i, phrase in enumerate(phrases):
-            path = cache_dir / f"{prefix}_{i:02d}.wav"
-            if path.exists():
-                paths.append(str(path))
-                continue
-            log.info("generating filler", lang=lang, phrase=phrase)
-            try:
-                all_audio = []
-                max_tokens = max(256, len(phrase) * 20)
-                for result in model.generate_voice_design(
-                    text=phrase, language=lang, instruct="",
-                    verbose=False,
-                    temperature=0.7, repetition_penalty=1.2,
-                    max_tokens=max_tokens,
-                ):
-                    chunk = np.array(result.audio, dtype=np.float32)
-                    all_audio.append(chunk)
-                if all_audio:
-                    audio = np.concatenate(all_audio)
-                    # Trim trailing silence
-                    flat = audio.flatten() if audio.ndim > 1 else audio
-                    above = np.where(np.abs(flat) > 0.01)[0]
-                    if len(above) > 0:
-                        end = min(above[-1] + int(model.sample_rate * 0.3), len(flat))
-                        audio = audio[:end]
-                    sf.write(str(path), audio, model.sample_rate)
+            for v in range(FILLER_VARIANTS):
+                path = cache_dir / f"{prefix}_{i:02d}_v{v}.wav"
+                if path.exists():
                     paths.append(str(path))
-                    log.info("filler ready", path=str(path))
-                else:
-                    log.warning("filler empty", phrase=phrase)
-            except Exception as e:
-                log.error("filler generation failed", phrase=phrase, error=str(e))
+                    continue
+                log.info("generating filler", lang=lang, phrase=phrase, variant=v)
+                try:
+                    all_audio = []
+                    max_tokens = max(256, len(phrase) * 20)
+                    for result in model.generate_voice_design(
+                        text=phrase, language=lang, instruct="",
+                        verbose=False,
+                        temperature=0.7, repetition_penalty=1.2,
+                        max_tokens=max_tokens,
+                    ):
+                        chunk = np.array(result.audio, dtype=np.float32)
+                        all_audio.append(chunk)
+                    if all_audio:
+                        audio = np.concatenate(all_audio)
+                        # Trim trailing silence
+                        flat = audio.flatten() if audio.ndim > 1 else audio
+                        above = np.where(np.abs(flat) > 0.01)[0]
+                        if len(above) > 0:
+                            end = min(above[-1] + int(model.sample_rate * 0.3), len(flat))
+                            audio = audio[:end]
+                        sf.write(str(path), audio, model.sample_rate)
+                        paths.append(str(path))
+                        log.info("filler ready", path=str(path))
+                    else:
+                        log.warning("filler empty", phrase=phrase, variant=v)
+                except Exception as e:
+                    log.error("filler generation failed", phrase=phrase, variant=v, error=str(e))
         filler_cache[lang] = paths
     return filler_cache
 

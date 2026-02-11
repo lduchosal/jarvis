@@ -238,7 +238,8 @@ async def play_worker(
 # ---------------------------------------------------------------------------
 
 async def conversation_turn(
-    text: str, session_id: str | None, language: str, bundle: dict
+    text: str, session_id: str | None, language: str, bundle: dict,
+    model: str | None = None,
 ) -> str | None:
     """Send text to Claude Code, pipeline sentences to TTS. Returns new session_id."""
     opts = ClaudeCodeOptions(
@@ -246,6 +247,7 @@ async def conversation_turn(
         cwd=str(Path.cwd()),
         resume=session_id,
         include_partial_messages=True,
+        **({'model': model} if model else {}),
     )
 
     sentence_queue: asyncio.Queue = asyncio.Queue()
@@ -333,7 +335,7 @@ async def conversation_turn(
         if new_text:
             print(f"\n> {new_text}", flush=True)
             return await conversation_turn(
-                new_text, new_session_id, language, bundle
+                new_text, new_session_id, language, bundle, model=model,
             )
 
     return new_session_id
@@ -343,7 +345,7 @@ async def conversation_turn(
 # Main loop
 # ---------------------------------------------------------------------------
 
-async def run_talk(language: str = "French"):
+async def run_talk(language: str = "French", model: str | None = None):
     """Main talk loop: listen -> Claude Code -> speak -> repeat."""
     print("Loading STT model...", file=sys.stderr, flush=True)
     bundle = load_model()
@@ -359,7 +361,7 @@ async def run_talk(language: str = "French"):
 
             print(f"\n> {text}", flush=True)
             session_id = await conversation_turn(
-                text, session_id, language, bundle
+                text, session_id, language, bundle, model=model,
             )
             reset(bundle)
         except KeyboardInterrupt:
