@@ -4,6 +4,7 @@ import gc
 import importlib
 import json
 import logging
+import random
 import resource
 import signal
 import socket
@@ -18,6 +19,8 @@ warnings.filterwarnings("ignore", message=".*incorrect regex pattern.*")
 
 from pathlib import Path
 
+import numpy as np
+import soundfile as sf
 import structlog
 
 SOCKET_PATH = Path.home() / ".q3tts.sock"
@@ -86,6 +89,57 @@ class GenerationTimeout(BaseException):
     pass
 
 
+FILLERS = {
+    "French": ["Hmm.", "Voyons.", "Alors.", "Bonne question.", "Voyons voir."],
+    "English": ["Hmm.", "Let me think.", "Well.", "Good question.", "Let's see."],
+}
+
+
+def warm_fillers(model, log):
+    """Pre-generate filler audio files at startup. Cached on disk."""
+    cache_dir = Path.home() / ".cache" / "jarvis" / "fillers"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    filler_cache = {}
+    for lang, phrases in FILLERS.items():
+        prefix = lang[:2].lower()
+        paths = []
+        for i, phrase in enumerate(phrases):
+            path = cache_dir / f"{prefix}_{i:02d}.wav"
+            if path.exists():
+                paths.append(str(path))
+                continue
+            log.info("generating filler", lang=lang, phrase=phrase)
+            try:
+                all_audio = []
+                max_tokens = max(256, len(phrase) * 20)
+                for result in model.generate_voice_design(
+                    text=phrase, language=lang, instruct="",
+                    verbose=False,
+                    temperature=0.7, repetition_penalty=1.2,
+                    max_tokens=max_tokens,
+                ):
+                    chunk = np.array(result.audio, dtype=np.float32)
+                    all_audio.append(chunk)
+                if all_audio:
+                    audio = np.concatenate(all_audio)
+                    # Trim trailing silence
+                    flat = audio.flatten() if audio.ndim > 1 else audio
+                    above = np.where(np.abs(flat) > 0.01)[0]
+                    if len(above) > 0:
+                        end = min(above[-1] + int(model.sample_rate * 0.3), len(flat))
+                        audio = audio[:end]
+                    sf.write(str(path), audio, model.sample_rate)
+                    paths.append(str(path))
+                    log.info("filler ready", path=str(path))
+                else:
+                    log.warning("filler empty", phrase=phrase)
+            except Exception as e:
+                log.error("filler generation failed", phrase=phrase, error=str(e))
+        filler_cache[lang] = paths
+    return filler_cache
+
+
 def main():
     log = setup_logging()
 
@@ -101,6 +155,10 @@ def main():
     model = load_model("Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign")
     load_time = time.time() - t0
     log.info("model loaded", params="1.7B", load_time=f"{load_time:.1f}s", mem_mb=mem_mb())
+
+    # Pre-generate fillers
+    filler_cache = warm_fillers(model, log)
+    log.info("fillers ready", count=sum(len(v) for v in filler_cache.values()))
 
     # Import handlers (hot-reloaded on each request)
     from jarvis import handlers
@@ -152,6 +210,17 @@ def main():
                     "requests_served": request_count,
                     "memory_mb": mem_mb(),
                 })
+                conn.close()
+                continue
+
+            if action == "get_filler":
+                lang = request.get("language", "French")
+                paths = filler_cache.get(lang, [])
+                if paths:
+                    path = random.choice(paths)
+                    send_message(conn, {"status": "ok", "path": path})
+                else:
+                    send_message(conn, {"status": "error", "message": f"no fillers for {lang}"})
                 conn.close()
                 continue
 

@@ -4,9 +4,33 @@ import time
 import traceback
 import sys
 
+import re
+
 import numpy as np
 import sounddevice as sd
 import soundfile as sf
+
+
+def sanitize_text(text: str) -> str:
+    """Clean up punctuation that causes TTS artifacts."""
+    text = text.replace('?', '.')
+    text = re.sub(r'\.{2,}', '.', text)  # ... or .. -> .
+    text = re.sub(r'[;:]', ',', text)    # ; : -> ,
+    text = re.sub(r'[«»"„“”"]', '', text)  # remove quotes
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
+
+def trim_trailing_silence(audio: np.ndarray, sr: int, threshold: float = 0.01, min_silence_s: float = 0.3) -> np.ndarray:
+    """Remove trailing silence from audio array."""
+    flat = audio.flatten() if audio.ndim > 1 else audio
+    above = np.where(np.abs(flat) > threshold)[0]
+    if len(above) == 0:
+        return audio[:0]
+    last_loud = above[-1]
+    tail = int(sr * min_silence_s)
+    end = min(last_loud + tail, len(flat))
+    return audio[:end]
 
 
 def handle(model, request: dict) -> dict:
@@ -24,6 +48,7 @@ def handle(model, request: dict) -> dict:
     if not text or not text.strip():
         return {"status": "error", "message": "no text provided"}
 
+    text = sanitize_text(text)
     language = request.get("language", "English")
     instruct = request.get("instruct") or ""
     output_path = request.get("output")
@@ -72,6 +97,7 @@ def handle(model, request: dict) -> dict:
         # Save to file if requested
         if output_path and output_path != "/dev/null" and all_audio:
             full_audio = np.concatenate(all_audio, axis=0)
+            full_audio = trim_trailing_silence(full_audio, model.sample_rate)
             sf.write(output_path, full_audio, model.sample_rate)
 
         return {"status": "ok"}

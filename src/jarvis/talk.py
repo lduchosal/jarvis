@@ -131,7 +131,7 @@ def generate_to_file(text: str, language: str, path: str) -> bool:
         return False
 
 
-def play_interruptible(path: str, barge_in: threading.Event) -> bool:
+def play_interruptible(path: str, barge_in: threading.Event, delete: bool = True) -> bool:
     """Play a WAV file, stoppable via barge_in event.
 
     Returns True if interrupted, False if completed normally.
@@ -141,10 +141,11 @@ def play_interruptible(path: str, barge_in: threading.Event) -> bool:
     except Exception:
         return False
     finally:
-        try:
-            os.unlink(path)
-        except OSError:
-            pass
+        if delete:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
 
     if data.ndim == 1:
         data = data.reshape(-1, 1)
@@ -207,8 +208,13 @@ async def gen_worker(
 async def play_worker(
     audio_queue: asyncio.Queue,
     barge_in: threading.Event,
+    filler_done: asyncio.Event | None = None,
 ):
     """Play audio files from queue sequentially, stoppable via barge_in."""
+    # Wait for filler to finish before playing real audio
+    if filler_done is not None:
+        await filler_done.wait()
+
     while True:
         path = await audio_queue.get()
         if path is None:
@@ -248,11 +254,31 @@ async def conversation_turn(
     keys = KeyMonitor()
     keys.start()
 
+    # Play a filler immediately while Claude thinks
+    filler_done = asyncio.Event()
+
+    async def _play_filler():
+        try:
+            resp = await asyncio.to_thread(
+                send_request, {"action": "get_filler", "language": language}
+            )
+            filler_path = resp.get("path")
+            if filler_path and not keys.barge_in.is_set():
+                await asyncio.to_thread(
+                    play_interruptible, filler_path, keys.barge_in, False
+                )
+        except Exception:
+            pass
+        finally:
+            filler_done.set()
+
+    filler_task = asyncio.create_task(_play_filler())
+
     gen_task = asyncio.create_task(
         gen_worker(sentence_queue, audio_queue, language, keys.barge_in)
     )
     play_task = asyncio.create_task(
-        play_worker(audio_queue, keys.barge_in)
+        play_worker(audio_queue, keys.barge_in, filler_done)
     )
 
     buffer = ""
@@ -293,6 +319,7 @@ async def conversation_turn(
                 await sentence_queue.put(buffer.strip())
 
         await sentence_queue.put(None)
+        await filler_task
         await gen_task
         await play_task
         keys.stop()
