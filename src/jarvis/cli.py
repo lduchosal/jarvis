@@ -104,10 +104,11 @@ def speak(text, output, language, instruct):
 
 
 @cli.command()
-def serve():
+@click.option("-m", "--model", default=None, help="TTS model: 1.7b (default) or 0.6b")
+def serve(model):
     """Start the TTS daemon."""
     from jarvis.daemon import main as daemon_main
-    daemon_main()
+    daemon_main(model_name=model)
 
 
 @cli.command()

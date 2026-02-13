@@ -156,12 +156,23 @@ def warm_fillers(model, log):
                 try:
                     all_audio = []
                     max_tokens = max(256, len(phrase) * 20)
-                    for result in model.generate_voice_design(
-                        text=phrase, language=lang, instruct="",
-                        verbose=False,
-                        temperature=0.7, repetition_penalty=1.2,
-                        max_tokens=max_tokens,
-                    ):
+                    is_custom_voice = getattr(model.config, "tts_model_type", "") == "custom_voice"
+                    if is_custom_voice:
+                        gen = model.generate_custom_voice(
+                            text=phrase, language=lang,
+                            speaker=model.supported_speakers[0],
+                            verbose=False,
+                            temperature=0.7, repetition_penalty=1.2,
+                            max_tokens=max_tokens,
+                        )
+                    else:
+                        gen = model.generate_voice_design(
+                            text=phrase, language=lang, instruct="",
+                            verbose=False,
+                            temperature=0.7, repetition_penalty=1.2,
+                            max_tokens=max_tokens,
+                        )
+                    for result in gen:
                         chunk = np.array(result.audio, dtype=np.float32)
                         all_audio.append(chunk)
                     if all_audio:
@@ -183,7 +194,14 @@ def warm_fillers(model, log):
     return filler_cache
 
 
-def main():
+MODEL_ALIASES = {
+    "1.7b": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+    "0.6b": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
+}
+DEFAULT_MODEL = "1.7b"
+
+
+def main(model_name: str | None = None):
     log = setup_logging()
 
     # Clean up stale socket
@@ -191,13 +209,17 @@ def main():
         log.warning("removing stale socket", path=str(SOCKET_PATH))
         SOCKET_PATH.unlink()
 
+    # Resolve model name
+    model_key = (model_name or DEFAULT_MODEL).lower()
+    model_id = MODEL_ALIASES.get(model_key, model_key)
+
     # Load model once
-    log.info("loading model")
+    log.info("loading model", model=model_id)
     t0 = time.time()
     from mlx_audio.tts.utils import load_model
-    model = load_model("Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign")
+    model = load_model(model_id)
     load_time = time.time() - t0
-    log.info("model loaded", params="1.7B", load_time=f"{load_time:.1f}s", mem_mb=mem_mb())
+    log.info("model loaded", model=model_id, load_time=f"{load_time:.1f}s", mem_mb=mem_mb())
 
     # Pre-generate fillers
     filler_cache = warm_fillers(model, log)
