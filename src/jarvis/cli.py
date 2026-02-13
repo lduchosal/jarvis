@@ -105,10 +105,11 @@ def speak(text, output, language, instruct):
 
 @cli.command()
 @click.option("-m", "--model", default=None, help="TTS model: 1.7b (default) or 0.6b")
-def serve(model):
+@click.option("-w", "--workers", default=3, type=int, help="Number of parallel TTS workers (default: 3)")
+def serve(model, workers):
     """Start the TTS daemon."""
     from jarvis.daemon import main as daemon_main
-    daemon_main(model_name=model)
+    daemon_main(model_name=model, n_workers=workers)
 
 
 @cli.command()

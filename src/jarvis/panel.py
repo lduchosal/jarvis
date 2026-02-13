@@ -62,10 +62,11 @@ class ConversationLog:
         self.turns: list[dict] = []
 
     def record_turn(self, question: str, responses: dict[str, str]):
+        clean_responses = {k: _clean(v) for k, v in responses.items()}
         turn = {
             "ts": datetime.now().isoformat(),
-            "question": question,
-            "responses": responses,
+            "question": _clean(question),
+            "responses": clean_responses,
             "sessions": dict(self.sessions),
         }
         self.turns.append(turn)
@@ -136,7 +137,7 @@ async def stream_claude(
             if event.get("type") == "content_block_delta":
                 delta = event.get("delta", {})
                 if delta.get("type") == "text_delta":
-                    chunk = delta["text"]
+                    chunk = _clean(delta["text"])
                     print(chunk, end="", flush=True)
                     full_text += chunk
         elif isinstance(msg, ResultMessage):
@@ -162,13 +163,13 @@ async def stream_codex(
 
     async for event in streamed.events:
         if isinstance(event, ItemUpdatedEvent) and isinstance(event.item, AgentMessageItem):
-            new_text = event.item.text
+            new_text = _clean(event.item.text)
             if len(new_text) > prev_len:
                 print(new_text[prev_len:], end="", flush=True)
                 prev_len = len(new_text)
                 full_text = new_text
         elif isinstance(event, ItemCompletedEvent) and isinstance(event.item, AgentMessageItem):
-            new_text = event.item.text
+            new_text = _clean(event.item.text)
             if len(new_text) > prev_len:
                 print(new_text[prev_len:], end="", flush=True)
             full_text = new_text

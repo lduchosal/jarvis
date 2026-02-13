@@ -1,13 +1,21 @@
-"""Jarvis TTS daemon — keeps the model loaded, accepts requests over Unix socket."""
+"""Jarvis TTS daemon — asyncio event loop + multiprocessing worker pool.
 
+Architecture:
+  Main process: asyncio server, handles status/filler/shutdown, dispatches generate to workers.
+  N worker processes: each loads its own MLX model, handles generate requests.
+  MLX is NOT thread-safe — multiprocessing is required (one model per process).
+"""
+
+import asyncio
 import gc
 import importlib
 import json
 import logging
+import multiprocessing as mp
+import queue
 import random
 import resource
 import signal
-import socket
 import struct
 import sys
 import time
@@ -26,6 +34,7 @@ import structlog
 SOCKET_PATH = Path.home() / ".q3tts.sock"
 LOG_DIR = Path(__file__).parent.parent.parent / "logs"
 MAX_RETRIES = 2
+DEFAULT_WORKERS = 3
 
 
 def generation_timeout(text: str) -> int:
@@ -56,32 +65,6 @@ def setup_logging():
 def mem_mb() -> int:
     """Current RSS memory in MB."""
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // (1024 * 1024)
-
-
-def read_message(conn: socket.socket) -> dict:
-    """Read a length-prefixed JSON message from the connection."""
-    raw_len = b""
-    while len(raw_len) < 4:
-        chunk = conn.recv(4 - len(raw_len))
-        if not chunk:
-            raise ConnectionError("client disconnected")
-        raw_len += chunk
-    msg_len = struct.unpack("!I", raw_len)[0]
-
-    data = b""
-    while len(data) < msg_len:
-        chunk = conn.recv(msg_len - len(data))
-        if not chunk:
-            raise ConnectionError("client disconnected")
-        data += chunk
-
-    return json.loads(data.decode("utf-8"))
-
-
-def send_message(conn: socket.socket, msg: dict):
-    """Send a length-prefixed JSON message to the connection."""
-    payload = json.dumps(msg).encode("utf-8")
-    conn.sendall(struct.pack("!I", len(payload)) + payload)
 
 
 class GenerationTimeout(BaseException):
@@ -201,173 +184,335 @@ MODEL_ALIASES = {
 DEFAULT_MODEL = "1.7b"
 
 
-def main(model_name: str | None = None):
-    log = setup_logging()
+# ---------------------------------------------------------------------------
+# Worker process
+# ---------------------------------------------------------------------------
 
+class WorkerLog:
+    """Lightweight structlog-compatible logger for worker processes."""
+
+    def __init__(self, worker_id):
+        self.prefix = f"[worker-{worker_id}]"
+
+    def _log(self, level, msg, **kw):
+        extra = " ".join(f"{k}={v}" for k, v in kw.items()) if kw else ""
+        ts = time.strftime("%H:%M:%S")
+        print(f"{ts} {self.prefix} [{level}] {msg} {extra}".rstrip(), file=sys.stderr, flush=True)
+
+    def info(self, msg, **kw):
+        self._log("info", msg, **kw)
+
+    def warning(self, msg, **kw):
+        self._log("warn", msg, **kw)
+
+    def error(self, msg, **kw):
+        self._log("error", msg, **kw)
+
+    def debug(self, msg, **kw):
+        pass
+
+
+def worker_loop(task_queue, result_queue, model_id, worker_id, do_fillers):
+    """Worker process entry point: load model, handle generate requests.
+
+    Each worker is a separate OS process with its own MLX model instance.
+    Communication with main process via multiprocessing.Queue.
+    """
+    # Ignore SIGINT/SIGTERM — main process handles shutdown via poison pill
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+
+    # SIGALRM for generation timeouts (safe per-process)
+    def alarm_handler(signum, frame):
+        raise GenerationTimeout("generation timed out")
+
+    signal.signal(signal.SIGALRM, alarm_handler)
+
+    warnings.filterwarnings("ignore", message="You are using a model of type")
+    warnings.filterwarnings("ignore", message=".*incorrect regex pattern.*")
+
+    log = WorkerLog(worker_id)
+    log.info("loading model", model=model_id)
+    t0 = time.time()
+
+    from mlx_audio.tts.utils import load_model
+    model = load_model(model_id)
+    log.info("model loaded", elapsed=f"{time.time() - t0:.1f}s")
+
+    # Worker 0 generates fillers (cached on disk, fast on subsequent runs)
+    filler_cache = None
+    if do_fillers:
+        log.info("warming fillers")
+        filler_cache = warm_fillers(model, log)
+        log.info("fillers done", count=sum(len(v) for v in filler_cache.values()))
+
+    # Signal ready to main process
+    result_queue.put(("ready", worker_id, filler_cache))
+
+    # Import handlers (hot-reloaded on each request)
+    from jarvis import handlers
+
+    # Request loop
+    while True:
+        task = task_queue.get()
+        if task is None:
+            break  # poison pill → shutdown
+
+        request = task
+        text = request.get("text", "")
+        timeout_s = generation_timeout(text)
+
+        # Hot-reload handlers from disk
+        try:
+            importlib.reload(handlers)
+        except SyntaxError as e:
+            log.error("syntax error in handlers", error=str(e))
+            result_queue.put({"status": "error", "message": f"syntax error: {e}"})
+            continue
+
+        # Generation with SIGALRM timeout + retry
+        for attempt in range(1, MAX_RETRIES + 1):
+            signal.alarm(timeout_s)
+            try:
+                result = handlers.handle(model, request)
+                break
+            except GenerationTimeout:
+                signal.alarm(0)
+                if attempt < MAX_RETRIES:
+                    log.warning("timeout, retrying", attempt=attempt, timeout=timeout_s, text=text[:40])
+                else:
+                    result = {"status": "error",
+                              "message": f"generation timed out after {MAX_RETRIES}x{timeout_s}s"}
+            finally:
+                signal.alarm(0)
+
+        result_queue.put(result)
+        gc.collect()
+
+    log.info("exiting")
+
+
+# ---------------------------------------------------------------------------
+# Worker Pool
+# ---------------------------------------------------------------------------
+
+class WorkerPool:
+    """Manages N worker processes, dispatches generate requests round-robin."""
+
+    def __init__(self, n_workers, model_id, log):
+        self._log = log
+        self._n_workers = n_workers
+        self._workers = []  # [(Process, task_q, result_q), ...]
+        self._free = asyncio.Queue()  # worker_ids of available workers
+
+        for i in range(n_workers):
+            task_q = mp.Queue()
+            result_q = mp.Queue()
+            p = mp.Process(
+                target=worker_loop,
+                args=(task_q, result_q, model_id, i, i == 0),
+                daemon=True,
+            )
+            p.start()
+            self._workers.append((p, task_q, result_q))
+            log.info("worker started", worker=i, pid=p.pid)
+
+    async def wait_ready(self) -> dict:
+        """Wait for all workers to load their models. Returns filler_cache from worker 0."""
+        filler_cache = {}
+
+        async def wait_one(i):
+            nonlocal filler_cache
+            p, _, result_q = self._workers[i]
+            msg = await asyncio.to_thread(result_q.get)
+            _, wid, fc = msg
+            if fc is not None:
+                filler_cache = fc
+            self._free.put_nowait(wid)
+            self._log.info("worker ready", worker=wid, pid=p.pid)
+
+        await asyncio.gather(*[wait_one(i) for i in range(self._n_workers)])
+        return filler_cache
+
+    async def submit(self, request) -> dict:
+        """Submit a generate request to the next available worker. Awaits if all busy."""
+        worker_id = await self._free.get()
+        p, task_q, result_q = self._workers[worker_id]
+
+        await asyncio.to_thread(task_q.put, request)
+
+        try:
+            result = await asyncio.to_thread(result_q.get, True, 120)
+        except queue.Empty:
+            result = {"status": "error", "message": "worker timeout"}
+
+        if p.is_alive():
+            self._free.put_nowait(worker_id)
+        else:
+            self._log.error("worker died", worker=worker_id)
+
+        return result
+
+    def shutdown(self):
+        """Send poison pills and join all worker processes."""
+        for _, task_q, _ in self._workers:
+            try:
+                task_q.put(None)
+            except Exception:
+                pass
+
+        for p, _, _ in self._workers:
+            p.join(timeout=5)
+            if p.is_alive():
+                p.kill()
+                p.join(timeout=2)
+
+
+# ---------------------------------------------------------------------------
+# Async socket protocol (length-prefixed JSON, same as cli.py)
+# ---------------------------------------------------------------------------
+
+async def async_read_message(reader: asyncio.StreamReader) -> dict:
+    """Read a length-prefixed JSON message from an async stream."""
+    raw_len = await reader.readexactly(4)
+    msg_len = struct.unpack("!I", raw_len)[0]
+    data = await reader.readexactly(msg_len)
+    return json.loads(data.decode("utf-8"))
+
+
+async def async_send_message(writer: asyncio.StreamWriter, msg: dict):
+    """Send a length-prefixed JSON message to an async stream."""
+    payload = json.dumps(msg).encode("utf-8")
+    writer.write(struct.pack("!I", len(payload)) + payload)
+    await writer.drain()
+
+
+# ---------------------------------------------------------------------------
+# Main server
+# ---------------------------------------------------------------------------
+
+async def serve(model_id: str, n_workers: int, log):
+    """Async main loop: start workers, accept connections, dispatch requests."""
     # Clean up stale socket
     if SOCKET_PATH.exists():
         log.warning("removing stale socket", path=str(SOCKET_PATH))
         SOCKET_PATH.unlink()
 
-    # Resolve model name
-    model_key = (model_name or DEFAULT_MODEL).lower()
-    model_id = MODEL_ALIASES.get(model_key, model_key)
+    # Start worker pool and wait for readiness
+    log.info("starting workers", model=model_id, workers=n_workers)
+    pool = WorkerPool(n_workers, model_id, log)
+    filler_cache = await pool.wait_ready()
+    log.info("all workers ready", fillers=sum(len(v) for v in filler_cache.values()))
 
-    # Load model once
-    log.info("loading model", model=model_id)
-    t0 = time.time()
-    from mlx_audio.tts.utils import load_model
-    model = load_model(model_id)
-    load_time = time.time() - t0
-    log.info("model loaded", model=model_id, load_time=f"{load_time:.1f}s", mem_mb=mem_mb())
-
-    # Pre-generate fillers
-    filler_cache = warm_fillers(model, log)
-    log.info("fillers ready", count=sum(len(v) for v in filler_cache.values()))
-
-    # Import handlers (hot-reloaded on each request)
-    from jarvis import handlers
-
-    # Bind socket
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.bind(str(SOCKET_PATH))
-    sock.listen(5)
-    log.info("listening", socket=str(SOCKET_PATH))
-
-    # Signal handling for clean shutdown
-    shutdown = False
-
-    def handle_shutdown(signum, frame):
-        nonlocal shutdown
-        shutdown = True
-        log.info("shutdown signal received", signal=signum)
-        sock.close()
-
-    def handle_alarm(signum, frame):
-        raise GenerationTimeout("generation timed out")
-
-    signal.signal(signal.SIGTERM, handle_shutdown)
-    signal.signal(signal.SIGINT, handle_shutdown)
-    signal.signal(signal.SIGALRM, handle_alarm)
-
-    # Request loop
+    shutdown_event = asyncio.Event()
     request_count = 0
-    while not shutdown:
-        try:
-            conn, _ = sock.accept()
-        except OSError:
-            break  # socket closed by signal handler
 
+    async def handle_client(reader, writer):
+        nonlocal request_count
         try:
-            request = read_message(conn)
+            request = await async_read_message(reader)
             action = request.get("action", "generate")
 
             if action == "shutdown":
-                send_message(conn, {"status": "ok"})
-                conn.close()
+                await async_send_message(writer, {"status": "ok"})
                 log.info("shutdown requested by client")
-                break
+                shutdown_event.set()
+                return
 
             if action == "status":
-                send_message(conn, {
+                await async_send_message(writer, {
                     "status": "ok",
                     "model": "loaded",
+                    "workers": n_workers,
                     "requests_served": request_count,
                     "memory_mb": mem_mb(),
                 })
-                conn.close()
-                continue
+                return
 
             if action == "get_filler":
                 lang = request.get("language", "French")
                 paths = filler_cache.get(lang, [])
                 if paths:
-                    path = random.choice(paths)
-                    send_message(conn, {"status": "ok", "path": path})
+                    await async_send_message(writer, {"status": "ok", "path": random.choice(paths)})
                 else:
-                    send_message(conn, {"status": "error", "message": f"no fillers for {lang}"})
-                conn.close()
-                continue
+                    await async_send_message(writer, {"status": "error", "message": f"no fillers for {lang}"})
+                return
 
             if action == "generate":
                 request_count += 1
+                req_num = request_count
                 t_start = time.time()
                 text = request.get("text", "")
                 output = request.get("output")
-                dest = output if output else "speakers"
+                dest = output or "speakers"
 
-                log.debug("request received", req=request_count, text=text[:60], dest=dest)
-
-                # Hot-reload handlers
-                importlib.reload(handlers)
-
-                # Run on main thread with alarm timeout + retry
-                timeout = generation_timeout(text)
-                for attempt in range(1, MAX_RETRIES + 1):
-                    signal.alarm(timeout)
-                    try:
-                        result = handlers.handle(model, request)
-                        break
-                    except GenerationTimeout:
-                        signal.alarm(0)
-                        if attempt < MAX_RETRIES:
-                            log.warning("timeout, retrying", req=request_count,
-                                        attempt=attempt, timeout=timeout, text=text[:40])
-                        else:
-                            result = {"status": "error",
-                                      "message": f"generation timed out after {MAX_RETRIES}x{timeout}s"}
-                    finally:
-                        signal.alarm(0)
-
-                send_message(conn, result)
-
+                log.debug("request received", req=req_num, text=text[:60], dest=dest)
+                result = await pool.submit(request)
                 elapsed = time.time() - t_start
+
                 status = result.get("status", "?")
-
                 if status == "ok":
-                    log.info("request done", req=request_count, status=status,
-                             elapsed=f"{elapsed:.1f}s", text=text[:40], dest=dest, mem_mb=mem_mb())
+                    log.info("request done", req=req_num, elapsed=f"{elapsed:.1f}s",
+                             text=text[:40], dest=dest)
                 else:
-                    log.error("request failed", req=request_count, status=status,
-                              elapsed=f"{elapsed:.1f}s", text=text[:40], dest=dest, mem_mb=mem_mb(),
-                              error=result.get("message"))
+                    log.error("request failed", req=req_num, elapsed=f"{elapsed:.1f}s",
+                              text=text[:40], error=result.get("message"))
 
-                # GC after each request to prevent memory buildup
-                gc.collect()
+                await async_send_message(writer, result)
+                return
 
-        except GenerationTimeout as e:
-            log.error("timeout", error=str(e))
-            try:
-                send_message(conn, {"status": "error", "message": str(e)})
-            except Exception:
-                pass
-        except SyntaxError as e:
-            log.error("syntax error in handlers", error=str(e), traceback=traceback.format_exc())
-            try:
-                send_message(conn, {"status": "error", "message": f"syntax error: {e}"})
-            except Exception:
-                pass
+            await async_send_message(writer, {"status": "error", "message": f"unknown action: {action}"})
+
+        except asyncio.IncompleteReadError:
+            pass  # client disconnected
+        except ConnectionResetError:
+            pass
         except Exception as e:
-            log.error("unhandled error", error=str(e), traceback=traceback.format_exc())
+            log.error("client error", error=str(e), traceback=traceback.format_exc())
             try:
-                send_message(conn, {"status": "error", "message": str(e)})
+                await async_send_message(writer, {"status": "error", "message": str(e)})
             except Exception:
                 pass
         finally:
-            signal.alarm(0)  # always cancel any pending alarm
+            writer.close()
             try:
-                conn.close()
+                await writer.wait_closed()
             except Exception:
                 pass
 
-    # Cleanup
+    # Signal handlers → set shutdown event
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, shutdown_event.set)
+
+    # Start accepting connections
+    server = await asyncio.start_unix_server(handle_client, path=str(SOCKET_PATH))
+    log.info("listening", socket=str(SOCKET_PATH))
+
+    # Serve until shutdown
+    await shutdown_event.wait()
+
+    # Graceful shutdown
+    server.close()
     try:
-        sock.close()
-    except Exception:
-        pass
+        await asyncio.wait_for(server.wait_closed(), timeout=5)
+    except asyncio.TimeoutError:
+        log.warning("forcing server close")
+
+    pool.shutdown()
     if SOCKET_PATH.exists():
         SOCKET_PATH.unlink()
     log.info("shutdown complete", requests_served=request_count)
+
+
+def main(model_name: str | None = None, n_workers: int = DEFAULT_WORKERS):
+    log = setup_logging()
+
+    # Resolve model name
+    model_key = (model_name or DEFAULT_MODEL).lower()
+    model_id = MODEL_ALIASES.get(model_key, model_key)
+
+    asyncio.run(serve(model_id, n_workers, log))
 
 
 if __name__ == "__main__":

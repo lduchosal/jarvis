@@ -35,6 +35,8 @@ VOICE_SYSTEM_PROMPT = (
     "- Réponds dans la langue de l'utilisateur."
 )
 
+N_GEN_WORKERS = 3
+
 
 # ---------------------------------------------------------------------------
 # KeyMonitor — non-blocking keypress detection via cbreak stdin
@@ -173,36 +175,64 @@ def play_interruptible(path: str, barge_in: threading.Event, delete: bool = True
 
 
 # ---------------------------------------------------------------------------
-# Pipeline workers
+# Pipeline workers (N parallel gen_workers + reorder + play)
 # ---------------------------------------------------------------------------
 
 async def gen_worker(
     sentence_queue: asyncio.Queue,
-    audio_queue: asyncio.Queue,
+    ordered_queue: asyncio.Queue,
     language: str,
     barge_in: threading.Event,
+    worker_id: int,
 ):
-    """Read sentences, send to daemon for generation, put audio paths in queue."""
-    i = 0
+    """Pull (seq, sentence) from queue, generate audio, push to ordered_queue."""
     while True:
-        sentence = await sentence_queue.get()
-        if sentence is None or barge_in.is_set():
-            await audio_queue.put(None)
+        item = await sentence_queue.get()
+        if item is None or barge_in.is_set():
+            await ordered_queue.put(None)
             break
-        path = f"/tmp/jarvis_tts_{os.getpid()}_{i:03d}.wav"
-        i += 1
+        seq, sentence = item
+        path = f"/tmp/jarvis_tts_{os.getpid()}_{worker_id}_{seq:03d}.wav"
         ok = await asyncio.to_thread(generate_to_file, sentence, language, path)
         if barge_in.is_set():
             try:
                 os.unlink(path)
             except OSError:
                 pass
-            await audio_queue.put(None)
+            await ordered_queue.put(None)
             break
         if ok:
-            await audio_queue.put(path)
+            await ordered_queue.put((seq, path))
         else:
+            await ordered_queue.put((seq, None))
             print(f"  TTS failed: {sentence[:40]}", file=sys.stderr)
+
+
+async def reorder_worker(
+    ordered_queue: asyncio.Queue,
+    audio_queue: asyncio.Queue,
+    n_workers: int,
+):
+    """Collect out-of-order results from N gen_workers, emit in sequence order."""
+    next_seq = 0
+    buffer = {}
+    done_count = 0
+    while True:
+        item = await ordered_queue.get()
+        if item is None:
+            done_count += 1
+            if done_count >= n_workers:
+                await audio_queue.put(None)
+                break
+            continue
+        seq, path = item
+        buffer[seq] = path
+        # Flush all consecutive ready items
+        while next_seq in buffer:
+            p = buffer.pop(next_seq)
+            if p:
+                await audio_queue.put(p)
+            next_seq += 1
 
 
 async def play_worker(
@@ -251,6 +281,7 @@ async def conversation_turn(
     )
 
     sentence_queue: asyncio.Queue = asyncio.Queue()
+    ordered_queue: asyncio.Queue = asyncio.Queue()
     audio_queue: asyncio.Queue = asyncio.Queue()
 
     keys = KeyMonitor()
@@ -276,14 +307,21 @@ async def conversation_turn(
 
     filler_task = asyncio.create_task(_play_filler())
 
-    gen_task = asyncio.create_task(
-        gen_worker(sentence_queue, audio_queue, language, keys.barge_in)
+    # Launch N gen_workers + 1 reorder_worker + 1 play_worker
+    gen_tasks = []
+    for i in range(N_GEN_WORKERS):
+        gen_tasks.append(asyncio.create_task(
+            gen_worker(sentence_queue, ordered_queue, language, keys.barge_in, i)
+        ))
+    reorder_task = asyncio.create_task(
+        reorder_worker(ordered_queue, audio_queue, N_GEN_WORKERS)
     )
     play_task = asyncio.create_task(
         play_worker(audio_queue, keys.barge_in, filler_done)
     )
 
     buffer = ""
+    seq = 0
     new_session_id = session_id
 
     try:
@@ -301,7 +339,8 @@ async def conversation_turn(
                         buffer += chunk
                         sentences, buffer = extract_sentences(buffer)
                         for s in sentences:
-                            await sentence_queue.put(s)
+                            await sentence_queue.put((seq, s))
+                            seq += 1
             elif isinstance(msg, AssistantMessage):
                 for block in msg.content:
                     if isinstance(block, ToolUseBlock):
@@ -318,11 +357,16 @@ async def conversation_turn(
         else:
             # Normal: flush remaining buffer
             if buffer.strip():
-                await sentence_queue.put(buffer.strip())
+                await sentence_queue.put((seq, buffer.strip()))
+                seq += 1
 
-        await sentence_queue.put(None)
+        # Send one sentinel per gen_worker
+        for _ in range(N_GEN_WORKERS):
+            await sentence_queue.put(None)
+
         await filler_task
-        await gen_task
+        await asyncio.gather(*gen_tasks)
+        await reorder_task
         await play_task
         keys.stop()
 
