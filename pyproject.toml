@@ -17,6 +17,7 @@ dependencies = [
     "sentencepiece>=0.2.1",
     "sphn>=0.2.1",
     "openai-codex-sdk>=0.1.11",
+    "google-genai>=1.0",
 ]
 requires-python = ">=3.12"
 readme = "README.md"

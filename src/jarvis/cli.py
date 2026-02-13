@@ -216,15 +216,16 @@ def talk(language, model):
 @cli.command()
 @click.option("-l", "--language", default="French", help="Language for TTS (default: French)")
 @click.option("--tts/--no-tts", default=False, help="Read responses aloud via TTS daemon")
-def panel(language, tts):
-    """Multi-model debate: Claude 4.6 + Codex 5.3."""
+@click.option("-r", "--resume", default=None, help="Resume session: 'latest' or session name")
+def panel(language, tts, resume):
+    """Multi-model debate: Claude 4.6 + Codex 5.3 + Gemini 2.5."""
     if tts and not daemon_is_running():
         click.echo("Error: --tts requires TTS daemon. Start with: jah serve", err=True)
         sys.exit(1)
 
     import asyncio
     from jarvis.panel import run_panel
-    asyncio.run(run_panel(language=language, tts=tts))
+    asyncio.run(run_panel(language=language, tts=tts, resume=resume))
 
 
 if __name__ == "__main__":
