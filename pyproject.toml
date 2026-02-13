@@ -16,6 +16,7 @@ dependencies = [
     "rustymimi>=0.4.1",
     "sentencepiece>=0.2.1",
     "sphn>=0.2.1",
+    "openai-codex-sdk>=0.1.11",
 ]
 requires-python = ">=3.12"
 readme = "README.md"

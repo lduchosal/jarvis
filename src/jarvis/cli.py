@@ -10,7 +10,7 @@ import click
 
 SOCKET_PATH = Path.home() / ".q3tts.sock"
 
-SUBCOMMANDS = {"serve", "stop", "status", "stress", "listen", "echo", "talk"}
+SUBCOMMANDS = {"serve", "stop", "status", "stress", "listen", "echo", "talk", "panel"}
 
 
 def send_message(sock: socket.socket, msg: dict):
@@ -211,6 +211,20 @@ def talk(language, model):
     import asyncio
     from jarvis.talk import run_talk
     asyncio.run(run_talk(language=language, model=model))
+
+
+@cli.command()
+@click.option("-l", "--language", default="French", help="Language for TTS (default: French)")
+@click.option("--tts/--no-tts", default=False, help="Read responses aloud via TTS daemon")
+def panel(language, tts):
+    """Multi-model debate: Claude 4.6 + Codex 5.3."""
+    if tts and not daemon_is_running():
+        click.echo("Error: --tts requires TTS daemon. Start with: jah serve", err=True)
+        sys.exit(1)
+
+    import asyncio
+    from jarvis.panel import run_panel
+    asyncio.run(run_panel(language=language, tts=tts))
 
 
 if __name__ == "__main__":
