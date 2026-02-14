@@ -53,6 +53,7 @@ Dims  Feature                  Source                           Notes
 
 - **One-hot catégoriel** : `evoStage`, `pokemonType`, `weaknessType`, `resistanceType` passent en one-hot pour éliminer le biais ordinal. Le coût en dims (+27) est justifié par la suppression d'un signal trompeur.
 - **Famille d'évolution explicite** : `evoFamilyId` rend visible la contrainte de légalité d'évolution (ex: Charmander -> Charmeleon autorisé, Charmander -> Wartortle interdit). Ce champ doit aussi exister côté main pour que le WM puisse apprendre l'appariement board/main.
+- **Compromis evoFamilyId** : `evoFamilyId` est encodé en scalaire (pas en one-hot) pour éviter une explosion de dimensions quand le nombre de familles augmente. Ce choix introduit un risque ordinal limité; la direction cible est d'utiliser un embedding learnable de cet identifiant dans le `WorldModelNet`.
 - **Attaques conservées** : `atkExists`, `atkDamage`, `atkTotalCost` (12 dims) sont indispensables pour que le WM prédise les dégâts infligés.
 - **Énergie en deux niveaux** :
   - `effectiveEnergy[11]` = total d'énergie payable par type, toutes sources confondues (basiques + contribution des spéciales). C'est ce qui détermine si un coût d'attaque est satisfait.
@@ -61,6 +62,12 @@ Dims  Feature                  Source                           Notes
 - **Masquage** : quand `occupied = 0`, toutes les features sont multipliées par 0.
 
 Toutes les features statiques viennent du `CardRegistry` via `index_select(0, cardIdx.clamp(0))` — lookup tensoriel, pas de boucle.
+
+### Séparation des couches (important)
+
+- Le `GameState` canonique conserve `cardIndex` par slot pour le moteur de règles, l'affichage humain, le debug et les vérifications de cohérence.
+- La spec de ce document décrit uniquement le vecteur d'observation `Observe()` destiné au World Model.
+- Dans `Observe()`, `cardIndex` brut est remplacé par des features dépliées (type, attaques, faiblesse/résistance, énergie, etc.) car l'identifiant brut est peu exploitable par un MLP.
 
 ## Comparaison v1 → v2.1
 
@@ -93,3 +100,8 @@ Total                      14           32               49
 ## Total board
 
 12 slots × 49 dims = **588 dims** (actuel : 168)
+
+## Auteurs
+Q Humain, le 2026-02-14
+Claude Opus 4.6 (Anthropic), review et co-rédaction, le 2026-02-14
+Codex 5.3 (OpenAI), co-rédaction, le 2026-02-14
