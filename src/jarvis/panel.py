@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import random
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -277,40 +278,43 @@ async def run_panel(
 
         turn_responses: dict[str, str] = {}
 
-        # --- Claude (goes first, sees Codex's previous response) ---
-        try:
-            claude_prompt = _build_context(last_responses, question)
-            claude_response, claude_session_id = await stream_claude(
-                claude_prompt, claude_session_id,
-            )
-            log.set_session("claude", claude_session_id)
-            turn_responses["Claude"] = claude_response
-        except Exception as e:
-            print(f"\n  Claude error: {e}", file=sys.stderr)
-            turn_responses["Claude"] = ""
+        # Randomize speaking order each round
+        order = ["Claude", "Codex"]
+        random.shuffle(order)
 
-        if tts and turn_responses.get("Claude"):
-            await asyncio.to_thread(_tts_speak, turn_responses["Claude"], language)
+        for i, participant in enumerate(order):
+            # First speaker sees other's previous response;
+            # second speaker sees first speaker's current response
+            if i == 0:
+                context = {k: v for k, v in last_responses.items() if k != participant}
+            else:
+                context = dict(turn_responses)
 
-        # --- Codex (sees Claude's current response) ---
-        try:
-            codex_context = {"Claude": turn_responses.get("Claude", "")}
-            codex_prompt = (
-                f"{PANEL_SYSTEM_CODEX}\n\n"
-                + _build_context(codex_context, question)
-            )
-            codex_response = await stream_codex(codex_prompt, codex_thread)
-            turn_responses["Codex"] = codex_response
-        except Exception as e:
-            print(f"\n  Codex error: {e}", file=sys.stderr)
-            turn_responses["Codex"] = ""
+            try:
+                if participant == "Claude":
+                    prompt = _build_context(context, question)
+                    response, claude_session_id = await stream_claude(
+                        prompt, claude_session_id,
+                    )
+                    log.set_session("claude", claude_session_id)
+                else:
+                    prompt = (
+                        f"{PANEL_SYSTEM_CODEX}\n\n"
+                        + _build_context(context, question)
+                    )
+                    response = await stream_codex(prompt, codex_thread)
+            except Exception as e:
+                print(f"\n  {participant} error: {e}", file=sys.stderr)
+                response = ""
 
-        if tts and turn_responses.get("Codex"):
-            await asyncio.to_thread(_tts_speak, turn_responses["Codex"], language)
+            turn_responses[participant] = response
+
+            if tts and response:
+                await asyncio.to_thread(_tts_speak, response, language)
 
         # Save turn to disk (crash-safe)
         log.record_turn(question, turn_responses)
-        last_responses = {"Codex": turn_responses.get("Codex", "")}
+        last_responses = dict(turn_responses)
 
         print()
 
