@@ -17,7 +17,7 @@ Lecture:
 - biais de régression vers la moyenne sur la composante HP en contexte attaque
 - signal de supervision HP trop diffus dans la tête delta globale
 
-## 2) Pistes v3
+## 2) Pistes v3 retenues
 
 ### Piste A — Tête HP dédiée (multi-tête)
 
@@ -35,21 +35,6 @@ Intérêt:
 - supervision plus forte et plus stable sur la variable critique
 - réduit la dilution du signal HP dans les 122 dims
 
-### Piste B — Dégâts en classification discrète
-
-Principe:
-- ajouter une tête `damage_class` qui prédit une classe de dégâts discrets
-- classes POC proposées: `{0, 10, 20, 30, 40, 50, 60}`
-- mapping classe -> dégâts appliqués dans la cible d'entraînement
-
-Loss:
-- cross-entropy sur `damage_class`
-- combinable avec tête HP dédiée (Piste A)
-
-Intérêt:
-- évite les sorties intermédiaires biaisées (ex: 24.7 au lieu de 20/30)
-- colle à la nature discrète des dégâts dans le POC
-
 ### Piste C — Repondération attaque plus agressive
 
 Principe:
@@ -66,13 +51,9 @@ Intérêt:
 
 ## 3) Design v3 recommandé
 
-Version v3.1 (recommandée):
+Version v3.1 (recommandée et unique):
 - Piste A + Piste C
 - garder régression continue pour limiter la complexité d'intégration
-
-Version v3.2 (si v3.1 insuffisante):
-- Piste A + Piste B + Piste C
-- architecture hybride (delta continu + dégâts discrets)
 
 ## 4) Datasets et split
 
@@ -82,7 +63,6 @@ Invariants:
 - sampler pondéré conservé
 
 Ajouts:
-- audit de couverture des classes de dégâts pour la Piste B
 - contrôle des transitions d'attaque rares
 
 ## 5) Plan d'expérimentation
@@ -91,7 +71,6 @@ Runs minimum:
 - R0: v2 baseline (référence)
 - R1: v3.1 (tête HP + poids attaque x10)
 - R2: v3.1 (tête HP + poids attaque x20)
-- R3: v3.2 (ajout damage_class)
 
 Comparaison:
 - mêmes seeds de benchmark
@@ -124,3 +103,19 @@ Un modèle v3 est promu uniquement si:
 - versionner le schéma de sortie (`model_output_version`)
 - conserver compatibilité v2/v3 via adaptateur explicite côté runner ONNX
 
+## 9) Rejeté
+
+### Piste B — Dégâts en classification discrète
+
+Statut:
+- rejetée pour le design cible
+
+Raison:
+- la classification discrète fonctionne en POC car l'ensemble des dégâts est petit et quasi fini
+- dans les versions ultérieures du jeu, l'espace des dégâts et modificateurs devient beaucoup plus large et contextuel
+- cette approche impose de redéfinir les classes à chaque extension/règle, ce qui crée une forte dette de maintenance
+- elle risque de ne pas scaler proprement avec évolutions, effets d'attaque, outils et modificateurs conditionnels
+
+Décision:
+- privilégier une approche pérenne basée sur régression contrainte (Piste A + Piste C)
+- conserver la piste B uniquement comme référence historique, non planifiée en implémentation
