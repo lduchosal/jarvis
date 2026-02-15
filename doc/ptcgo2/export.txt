@@ -1,0 +1,11 @@
+[torch.onnx] Obtain model graph for `WorldModelNet([...]` with `torch.export.export(..., strict=False)`...
+[torch.onnx] Obtain model graph for `WorldModelNet([...]` with `torch.export.export(..., strict=False)`... ✅
+[torch.onnx] Run decomposition...
+[torch.onnx] Run decomposition... ✅
+[torch.onnx] Translate the graph into ONNX...
+[torch.onnx] Translate the graph into ONNX... ✅
+Exported ONNX model to models/worldmodel2.onnx
+  delta_obs shape: (1, 122)
+  reward shape: (1, 1)
+  done_logit shape: (1, 1)
+ONNX verification passed.

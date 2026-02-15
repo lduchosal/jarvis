@@ -72,6 +72,28 @@ TurnIndex               1    +1 en fin de tour
 
 Total dynamique : 28 dims sur 122.
 
+### Mise à jour de current_player (CRITIQUE)
+
+Le WM ne prédit PAS `current_player`. Cette mise à jour est déterministe et appliquée par le code du `WorldModelBackend`, pas par le réseau :
+
+- Si l'action est `Pass` ou `AttackN` (fin de tour) : `current_player = 1 - current_player`
+- Si l'action est `AttachEnergy` : `current_player` reste inchangé (le tour continue)
+- Si `done = true` : `current_player` reste inchangé (partie terminée)
+
+Cette logique est identique à celle du `CSharpBackend` et n'a pas besoin d'être apprise.
+
+### Réconciliation du done
+
+Le WM prédit `done_logit` via le réseau, mais le done final est réconcilié avec l'état post-delta :
+
+```
+done_wm = sigmoid(done_logit) > 0.5
+done_hp = (HP_adverse <= 0)
+done_final = done_wm OR done_hp
+```
+
+Si le WM prédit `done=false` mais que les HP appliqués tombent à 0, la partie est quand même terminée. Cela évite les incohérences où le WM laisserait la partie continuer avec un Pokémon KO.
+
 ### Invariants après application du delta
 
 Après chaque `WorldModelBackend.Step()`, vérifier :
@@ -79,6 +101,7 @@ Après chaque `WorldModelBackend.Step()`, vérifier :
 - `energy[i] >= 0` pour tout i
 - `energyAttached` ∈ {0, 1} (arrondir au plus proche)
 - `Phase` ∈ {0, 0.5, 1} (arrondir au plus proche)
+- `done` réconcilié (cf. section ci-dessus)
 - Tous les champs statiques sont inchangés (assertion en debug)
 - `cardIndex` est préservé tel quel
 
@@ -249,8 +272,15 @@ public class WorldModelBackend : ITransitionBackend
         //    - energy[i] = max(0, round(energy[i]))
         //    - energyAttached = round(energyAttached) ∈ {0, 1}
         //    - Phase = nearest({0, 0.5, 1})
-        //    - done = sigmoid(done_logit) > 0.5
-        // 8. Retourner StepResult
+        // 8. Réconcilier done :
+        //    - done_wm = sigmoid(done_logit) > 0.5
+        //    - done_hp = (HP adverse <= 0)
+        //    - done = done_wm OR done_hp
+        // 9. Mettre à jour current_player (déterministe, pas prédit) :
+        //    - Pass ou AttackN → current_player = 1 - current_player
+        //    - AttachEnergy → current_player inchangé
+        //    - done → current_player inchangé
+        // 10. Retourner StepResult
     }
 
     public ReadOnlySpan<int> GetLegalActions(in GameState state)
