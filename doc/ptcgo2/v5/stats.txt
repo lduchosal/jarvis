@@ -1,0 +1,40 @@
+q@macbook ptcgo2 %   dotnet run --project src/Ptcgo2.Console -- tournament --players 1024 --tournaments 1024 --seed 0 --policy attackbot
+
+
+═══════════════════════════════════════════════
+  Tournois: 1024  Joueurs/tournoi: 1024  Seed: 0
+  Policy: attackbot  Card select: random
+═══════════════════════════════════════════════
+
+  Top 10 — Win rate (victoire tournoi):
+    #1   Farfetch'd     ( 50 HP, Colorless )   1.9%  (512/27021)
+    #2   Electabuzz     ( 70 HP, Electric  )   1.0%  (266/26616)
+    #3   Chansey        (120 HP, Colorless )   0.4%  (108/26797)
+    #4   Hitmonchan     ( 70 HP, Fighting  )   0.3%  (75/26922)
+    #5   Nidoran ♂      ( 40 HP, Grass     )   0.1%  (25/27066)
+    #6   Magnemite      ( 40 HP, Electric  )   0.1%  (17/27123)
+    #7   Zapdos         ( 90 HP, Electric  )   0.1%  (14/26606)
+    #8   Machop         ( 50 HP, Fighting  )   0.0%  (3/26741)
+    #9   Charmander     ( 50 HP, Fire      )   0.0%  (3/26963)
+    #10  Diglett        ( 30 HP, Fighting  )   0.0%  (1/26730)
+
+  Top 10 — Top 4 rate (demi-finale):
+    #1   Farfetch'd     ( 50 HP, Colorless )   7.9%  (2131/27021)
+    #2   Electabuzz     ( 70 HP, Electric  )   2.1%  (562/26616)
+    #3   Hitmonchan     ( 70 HP, Fighting  )   1.9%  (504/26922)
+    #4   Chansey        (120 HP, Colorless )   1.5%  (396/26797)
+    #5   Zapdos         ( 90 HP, Electric  )   0.7%  (173/26606)
+    #6   Nidoran ♂      ( 40 HP, Grass     )   0.6%  (151/27066)
+    #7   Magnemite      ( 40 HP, Electric  )   0.3%  (70/27123)
+    #8   Machop         ( 50 HP, Fighting  )   0.2%  (43/26741)
+    #9   Charmander     ( 50 HP, Fire      )   0.1%  (34/26963)
+    #10  Magmar         ( 50 HP, Fire      )   0.1%  (20/26907)
+
+  Matchup matrix (top 5 cartes, win rate %):
+                  Farfetch'd  Electabuzz     Chansey  Hitmonchan   Nidoran ♂
+  Farfetch'd               —          0%         50%        100%         49%
+  Electabuzz            100%           —          0%          0%        100%
+  Chansey                50%        100%           —          0%         49%
+  Hitmonchan              0%        100%        100%           —        100%
+  Nidoran ♂              51%          0%         51%          0%           —
+

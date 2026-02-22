@@ -218,15 +218,19 @@ def talk(language, model):
 @click.option("-l", "--language", default="French", help="Language for TTS (default: French)")
 @click.option("--tts/--no-tts", default=False, help="Read responses aloud via TTS daemon")
 @click.option("-r", "--resume", default=None, help="Resume session: 'latest' or session name")
-def panel(language, tts, resume):
-    """Multi-model debate: Claude 4.6 + Codex 5.3 + Gemini 2.5."""
+@click.option("-p", "--participants", default=None,
+              help="Comma-separated: opus,sonnet,haiku,codex,gemini-2.5,gemini-3.0")
+@click.option("--roles/--no-roles", default=False, help="Assign debate roles to models (default: off)")
+def panel(language, tts, resume, participants, roles):
+    """Multi-model debate: Opus, Sonnet, Haiku, Codex, Gemini 2.5, Gemini 3.0."""
     if tts and not daemon_is_running():
         click.echo("Error: --tts requires TTS daemon. Start with: jah serve", err=True)
         sys.exit(1)
 
     import asyncio
     from jarvis.panel import run_panel
-    asyncio.run(run_panel(language=language, tts=tts, resume=resume))
+    asyncio.run(run_panel(language=language, tts=tts, resume=resume,
+                          participants_filter=participants, roles=roles))
 
 
 if __name__ == "__main__":
