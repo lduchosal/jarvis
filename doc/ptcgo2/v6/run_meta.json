@@ -1,0 +1,9 @@
+{
+  "seed": 0,
+  "B": 1024,
+  "max_steps": 50,
+  "sha256_card_index_map": "92a900b28a743ad9cfcd9f6a04b273e82ab5221f3cb22be3cde29d8ab54051ba",
+  "sha256_matchup_matrix": "923db72ee33560cc4c6f3317367662104cd9b1b4cadbdf81e6865c87564e945b",
+  "date": "2026-02-22T13:47:06.069319+00:00",
+  "git_commit": "10ce113"
+}
